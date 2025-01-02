@@ -1,0 +1,68 @@
+name: Mirroring
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Runs every 6 hours
+  workflow_dispatch:  # Allows manual triggering
+  push:
+
+jobs:
+  mirror-repos:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - remote: 'https://gitee.com/loongson-edu/open-la500'
+            github: 'loongson-community/open-la500'
+            description: 'Mirror of https://gitee.com/loongson-edu/open-la500.git'
+          - remote: 'https://gitee.com/loongson-edu/chiplab.git'
+            github: 'loongson-community/chiplab'
+            description: 'Mirror of https://gitee.com/loongson-edu/chiplab.git'
+      fail-fast: false
+
+    steps:
+      - name: Login to GitHub CLI
+        run: gh auth login --with-token <<< "${{ secrets.ROBOT_GH_TOKEN }}"
+
+      - name: Check and Create Repository
+        run: |
+          if ! gh repo view "${{ matrix.github }}" &>/dev/null; then
+            echo "Repository ${{ matrix.github }} doesn't exist. Creating it..."
+            gh repo create "${{ matrix.github }}" --disable-issues --disable-wiki --public --team "Mirror" --description "${{ matrix.description }}"
+          else
+            echo "Repository ${{ matrix.github }} already exists"
+          fi
+
+      - name: Cache Repository
+        id: cache-repo
+        uses: actions/cache@v3
+        with:
+          path: repo-${{ matrix.github }}
+          key: ${{ matrix.github }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ matrix.github }}-
+
+      - name: Mirror Repository
+        run: |
+          REPO_DIR="repo-${{ matrix.github }}"
+          if [ -d "$REPO_DIR" ]; then
+            echo "Using cached repository"
+            cd "$REPO_DIR"
+            git remote update --prune
+          else
+            echo "Cloning repository fresh"
+            git clone --bare "${{ matrix.remote }}" "$REPO_DIR"
+            cd "$REPO_DIR"
+          fi
+          
+          # Push to GitHub using token
+          git push --mirror "https://${{ secrets.ROBOT_GH_TOKEN }}@github.com/${{ matrix.github }}.git"
+
+  keepalive-job:
+    name: Keepalive Workflow
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gautamkrishnar/keepalive-workflow@v2
